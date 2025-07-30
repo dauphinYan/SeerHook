@@ -22,6 +22,8 @@
 
 生成的DLL文件需配合 [SeerAssistant](https://github.com/dauphinYan/SeerAssistant_C) 使用。
 
+本项目使用的到的第三方库有：`MinHook`。
+
 ### 声明
 
 本项目仅用于**技术研究与学习交流**，请勿用于任何商业用途。
