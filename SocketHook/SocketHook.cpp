@@ -5,14 +5,14 @@
 #include <iostream>
 #include <fstream>
 
-std::atomic<EClientType> g_clientType = EClientType::Unity;
+std::atomic<ClientType> g_clientType = ClientType::Unity;
 std::atomic<bool> g_hookEnabled = true;
 std::atomic<bool> g_running = true;
 std::mutex g_dataMutex;
 HMODULE hModule;
 
-decltype(&recv) OriginalRecv = nullptr;
-decltype(&send) OriginalSend = nullptr;
+decltype(&recv) originalRecv = nullptr;
+decltype(&send) originalSend = nullptr;
 
 static const wchar_t *PIPE_NAME = L"\\\\.\\pipe\\SeerSocketHook";
 static HANDLE hPipe = INVALID_HANDLE_VALUE;
@@ -33,7 +33,7 @@ void WriteDebugLog(const std::string &message)
 
 int WINAPI RecvEvent(SOCKET s, char *buf, int len, int flags)
 {
-    int ret = OriginalRecv(s, buf, len, flags);
+    int ret = originalRecv(s, buf, len, flags);
     if (g_hookEnabled && ret > 0)
     {
         std::lock_guard<std::mutex> lk(g_dataMutex);
@@ -44,7 +44,7 @@ int WINAPI RecvEvent(SOCKET s, char *buf, int len, int flags)
 
 int WINAPI SendEvent(SOCKET s, char *buf, int len, int flags)
 {
-    int ret = OriginalSend(s, buf, len, flags);
+    int ret = originalSend(s, buf, len, flags);
     if (g_hookEnabled && ret > 0)
     {
         std::lock_guard<std::mutex> lk(g_dataMutex);
@@ -139,7 +139,7 @@ void SendToInjector(SOCKET s, const char *data, size_t len, bool isSend)
 //     return 0;
 // }
 
-void InitHook(EClientType type)
+void InitHook(ClientType type)
 {
     WriteDebugLog("开始初始化Hook，客户端类型: " + std::to_string((int)type));
 
@@ -185,13 +185,13 @@ void InitHook(EClientType type)
     }
     WriteDebugLog("获取recv/send函数地址成功");
 
-    if (MH_CreateHook(targetRecv, reinterpret_cast<LPVOID>(RecvEvent), reinterpret_cast<LPVOID *>(&OriginalRecv)) != MH_OK)
+    if (MH_CreateHook(targetRecv, reinterpret_cast<LPVOID>(RecvEvent), reinterpret_cast<LPVOID *>(&originalRecv)) != MH_OK)
     {
         WriteDebugLog("创建recv hook失败");
         return;
     }
 
-    if (MH_CreateHook(targetSend, reinterpret_cast<LPVOID>(SendEvent), reinterpret_cast<LPVOID *>(&OriginalSend)) != MH_OK)
+    if (MH_CreateHook(targetSend, reinterpret_cast<LPVOID>(SendEvent), reinterpret_cast<LPVOID *>(&originalSend)) != MH_OK)
     {
         WriteDebugLog("创建send hook失败");
         return;
@@ -213,7 +213,7 @@ void InitHook(EClientType type)
 DWORD WINAPI InitHook_Thread(LPVOID lpParam)
 {
     WriteDebugLog("InitHook_Thread 开始执行");
-    EClientType type = *reinterpret_cast<EClientType *>(lpParam);
+    ClientType type = *reinterpret_cast<ClientType *>(lpParam);
     InitHook(type);
     WriteDebugLog("InitHook_Thread 执行完成");
     return 0;

@@ -7,7 +7,7 @@
 
 #include "MinHook.h"
 
-enum class EClientType
+enum class ClientType
 {
     Flash,
     Unity
@@ -21,20 +21,20 @@ struct PacketHeader
     uint8_t direction; // 0 = recv, 1 = send
 };
 
-extern std::atomic<EClientType> g_clientType;
+extern std::atomic<ClientType> g_clientType;
 extern std::atomic<bool> g_hookEnabled;
 extern std::atomic<bool> g_running;
 extern std::mutex g_dataMutex;
 
-extern decltype(&recv) OriginalRecv;
-extern decltype(&send) OriginalSend;
+extern decltype(&recv) originalRecv;
+extern decltype(&send) originalSend;
 
 extern int WINAPI RecvEvent(SOCKET, char *, int, int);
 extern int WINAPI SendEvent(SOCKET, char *, int, int);
 
 extern void InitPipeClient();
 extern void SendToInjector(SOCKET s, const char *data, size_t len, bool isSend);
-extern void InitHook(EClientType type);
+extern void InitHook(ClientType type);
 
 // 需要外部调用的函数。
 extern "C" __declspec(dllexport)
