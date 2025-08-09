@@ -1,10 +1,10 @@
 ## SeerHook
 
-本项目用于生成DLL，主要用于注入赛尔号（FLash端）客户端以捕获网络通信数据。
+本项目旨在生成用于注入赛尔号游戏客户端的 Hook DLL，以捕获其网络通信数据。
 
 ### 功能
 
-捕获赛尔号（FLash端）中存在的网络通信数据。
+拦截并捕获赛尔号游戏客户端的网络通信数据
 
 **捕获示例：**
 
@@ -20,7 +20,7 @@
 
 ### 注意
 
-生成的DLL文件需配合 [SeerAssistant](https://github.com/dauphinYan/SeerAssistant_C) 使用。
+生成的DLL文件需配合 [SeerAssistant](https://github.com/dauphinYan/SeerAssistant) 使用。
 
 本项目使用的到的第三方库有：`MinHook`。
 
