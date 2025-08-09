@@ -31,20 +31,10 @@ extern std::mutex g_dataMutex;
 extern decltype(&recv) originalRecv;
 extern decltype(&send) originalSend;
 extern decltype(&recvfrom) originalRecvFrom;
-extern decltype(&sendto) originalSendTo;
-
-// WSARecv / WSARecvFrom 的函数类型与原始指针
-typedef int (WSAAPI *WSARecv_t)(SOCKET, LPWSABUF, DWORD, LPDWORD, LPDWORD, LPWSAOVERLAPPED, LPWSAOVERLAPPED_COMPLETION_ROUTINE);
-typedef int (WSAAPI *WSARecvFrom_t)(SOCKET, LPWSABUF, DWORD, LPDWORD, LPDWORD, struct sockaddr*, LPINT, LPWSAOVERLAPPED, LPWSAOVERLAPPED_COMPLETION_ROUTINE);
-
-extern WSARecv_t originalWSARecv;
-extern WSARecvFrom_t originalWSARecvFrom;
 
 // 导出的事件回调（钩子函数）
 extern int WINAPI RecvEvent(SOCKET, char *, int, int);
-extern int WINAPI RecvFromEvent(SOCKET, char *, int, int, struct sockaddr*, int*);
-extern int WSARecvEvent(SOCKET, LPWSABUF, DWORD, LPDWORD, LPDWORD, LPWSAOVERLAPPED, LPWSAOVERLAPPED_COMPLETION_ROUTINE);
-extern int WSARecvFromEvent(SOCKET, LPWSABUF, DWORD, LPDWORD, LPDWORD, struct sockaddr*, LPINT, LPWSAOVERLAPPED, LPWSAOVERLAPPED_COMPLETION_ROUTINE);
+extern int WINAPI RecvFromEvent(SOCKET, char *, int, int, struct sockaddr *, int *);
 extern int WINAPI SendEvent(SOCKET, char *, int, int);
 
 // 管道和发送数据到注入端的函数
@@ -56,7 +46,3 @@ extern void InitHook(ClientType type);
 extern "C" __declspec(dllexport)
 DWORD WINAPI
 InitHook_Thread(LPVOID lpParam);
-
-// 供 completion routine 路径使用（内部实现用）
-extern void RegisterOverlappedBuffers(LPWSAOVERLAPPED lpOverlapped, const std::vector<WSABUF>& bufs, LPWSAOVERLAPPED_COMPLETION_ROUTINE origRoutine);
-extern void UnregisterOverlappedBuffers(LPWSAOVERLAPPED lpOverlapped);
