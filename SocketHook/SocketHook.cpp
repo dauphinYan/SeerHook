@@ -23,7 +23,7 @@ static std::mutex pipeMutex;
 
 void WriteDebugLog(const std::string &message)
 {
-    std::ofstream logFile("Log/Sockethook_debug.log", std::ios::app);
+    std::ofstream logFile("log/sockethook_log.log", std::ios::app);
     if (logFile.is_open())
     {
         SYSTEMTIME st;
