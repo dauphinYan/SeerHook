@@ -6,6 +6,8 @@
 #include <fstream>
 #include <unordered_map>
 #include <algorithm>
+#include <atomic>
+#include <mutex>
 
 std::atomic<ClientType> g_clientType = ClientType::Unity;
 std::atomic<bool> g_hookEnabled = true;
@@ -21,18 +23,59 @@ static const wchar_t *PIPE_NAME = L"\\\\.\\pipe\\SeerSocketHook";
 static HANDLE hPipe = INVALID_HANDLE_VALUE;
 static std::mutex pipeMutex;
 
-void WriteDebugLog(const std::string &message)
+// ---------------------- Logging System ----------------------
+void WriteDebugLog(const std::string &level, const std::string &message, DWORD errorCode = 0)
 {
+    // Ensure log directory exists
+    CreateDirectoryA("log", nullptr);
+
     std::ofstream logFile("log/sockethook_log.log", std::ios::app);
     if (logFile.is_open())
     {
         SYSTEMTIME st;
         GetLocalTime(&st);
-        logFile << "[" << st.wHour << ":" << st.wMinute << ":" << st.wSecond << "] "
-                << message << std::endl;
+
+        DWORD threadId = GetCurrentThreadId();
+
+        logFile << "["
+                << std::setw(2) << std::setfill('0') << st.wHour << ":"
+                << std::setw(2) << std::setfill('0') << st.wMinute << ":"
+                << std::setw(2) << std::setfill('0') << st.wSecond << "."
+                << std::setw(3) << std::setfill('0') << st.wMilliseconds
+                << "][TID:" << threadId << "]"
+                << "[" << level << "] "
+                << message;
+
+        if (errorCode != 0)
+        {
+            LPSTR errorBuffer = nullptr;
+            FormatMessageA(
+                FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                nullptr, errorCode,
+                MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                (LPSTR)&errorBuffer, 0, nullptr);
+
+            if (errorBuffer)
+            {
+                logFile << " | ErrorCode: " << errorCode << " (" << errorBuffer << ")";
+                LocalFree(errorBuffer);
+            }
+            else
+            {
+                logFile << " | ErrorCode: " << errorCode;
+            }
+        }
+
+        logFile << std::endl;
         logFile.close();
     }
 }
+
+#define LOG_INFO(msg) WriteDebugLog("INFO", msg)
+#define LOG_WARN(msg) WriteDebugLog("WARN", msg)
+#define LOG_ERROR(msg, code) WriteDebugLog("ERROR", msg, code)
+#define LOG_DEBUG(msg) WriteDebugLog("DEBUG", msg)
+// ------------------------------------------------------------
 
 int WINAPI RecvEvent(SOCKET s, char *buf, int len, int flags)
 {
@@ -69,7 +112,7 @@ int WINAPI SendEvent(SOCKET s, char *buf, int len, int flags)
 
 void InitPipeClient()
 {
-    WriteDebugLog("开始初始化管道客户端...");
+    LOG_INFO("Initializing pipe client...");
 
     int retryCount = 0;
     const int maxRetries = 10;
@@ -87,25 +130,24 @@ void InitPipeClient()
 
         if (hPipe != INVALID_HANDLE_VALUE)
         {
-            WriteDebugLog("管道连接成功!");
+            LOG_INFO("Successfully connected to named pipe.");
             break;
         }
 
         DWORD error = GetLastError();
-        WriteDebugLog("管道连接失败，错误码: " + std::to_string(error));
-
+        LOG_WARN("Failed to connect to pipe.");
         if (error != ERROR_PIPE_BUSY)
         {
-            WriteDebugLog("管道不可用，等待重试...");
+            LOG_WARN("Pipe not available, retrying...");
             Sleep(1000);
             retryCount++;
             continue;
         }
 
-        WriteDebugLog("管道忙碌，等待可用...");
+        LOG_INFO("Pipe is busy, waiting...");
         if (!WaitNamedPipeW(PIPE_NAME, 5000))
         {
-            WriteDebugLog("等待管道超时，重试...");
+            LOG_WARN("WaitNamedPipe timed out, retrying...");
             retryCount++;
             continue;
         }
@@ -113,7 +155,7 @@ void InitPipeClient()
 
     if (hPipe == INVALID_HANDLE_VALUE)
     {
-        WriteDebugLog("管道连接最终失败，达到最大重试次数");
+        LOG_ERROR("Failed to connect to named pipe after maximum retries.", GetLastError());
     }
 }
 
@@ -138,35 +180,35 @@ void SendToInjector(SOCKET s, const char *data, size_t len, bool isSend)
     if (!result)
     {
         DWORD error = GetLastError();
-        WriteDebugLog("写入管道失败，错误码: " + std::to_string(error));
+        LOG_ERROR("Failed to write data to pipe.", error);
         return;
     }
 }
 
 void InitHook(ClientType type)
 {
-    WriteDebugLog("开始初始化Hook，客户端类型: " + std::to_string((int)type));
+    LOG_INFO("Initializing Hook, client type: " + std::to_string((int)type));
 
     g_clientType = type;
 
     if (MH_Initialize() != MH_OK)
     {
-        WriteDebugLog("MH_Initialize 失败");
+        LOG_ERROR("MH_Initialize failed.", GetLastError());
         return;
     }
-    WriteDebugLog("MH_Initialize 成功");
+    LOG_INFO("MH_Initialize succeeded.");
 
-    // 等待 ws2_32.dll 加载
+    // Wait for ws2_32.dll to load
     HMODULE ws2_32 = nullptr;
     int retryCount = 0;
-    const int maxRetries = 50; // 最多等待 5 秒
+    const int maxRetries = 50; // wait up to 5s
 
     while (retryCount < maxRetries && !ws2_32)
     {
         ws2_32 = GetModuleHandleW(L"ws2_32");
         if (!ws2_32)
         {
-            WriteDebugLog("ws2_32.dll 尚未加载，等待中... (尝试 " + std::to_string(retryCount + 1) + "/" + std::to_string(maxRetries) + ")");
+            LOG_DEBUG("ws2_32.dll not loaded yet, waiting... (Attempt " + std::to_string(retryCount + 1) + "/" + std::to_string(maxRetries) + ")");
             Sleep(100);
             retryCount++;
         }
@@ -174,57 +216,57 @@ void InitHook(ClientType type)
 
     if (!ws2_32)
     {
-        WriteDebugLog("ws2_32.dll 加载失败，无法继续");
+        LOG_ERROR("Failed to load ws2_32.dll, cannot continue.", GetLastError());
         return;
     }
-    WriteDebugLog("ws2_32.dll 加载成功");
+    LOG_INFO("ws2_32.dll loaded successfully.");
 
-    // 获取函数地址
+    // Get target functions
     LPVOID targetRecv = reinterpret_cast<LPVOID>(GetProcAddress(ws2_32, "recv"));
     LPVOID targetSend = reinterpret_cast<LPVOID>(GetProcAddress(ws2_32, "send"));
     LPVOID targetRecvFrom = reinterpret_cast<LPVOID>(GetProcAddress(ws2_32, "recvfrom"));
 
     if (!targetRecv || !targetSend)
     {
-        WriteDebugLog("获取 recv/send 函数地址失败");
+        LOG_ERROR("Failed to get recv/send function address.", GetLastError());
     }
 
     if (targetRecv)
     {
         if (MH_CreateHook(targetRecv, reinterpret_cast<LPVOID>(RecvEvent), reinterpret_cast<LPVOID *>(&originalRecv)) != MH_OK)
-            WriteDebugLog("创建 recv hook 失败");
+            LOG_ERROR("Failed to create recv hook.", GetLastError());
     }
 
     if (targetSend)
     {
         if (MH_CreateHook(targetSend, reinterpret_cast<LPVOID>(SendEvent), reinterpret_cast<LPVOID *>(&originalSend)) != MH_OK)
-            WriteDebugLog("创建 send hook 失败");
+            LOG_ERROR("Failed to create send hook.", GetLastError());
     }
 
     if (targetRecvFrom)
     {
         if (MH_CreateHook(targetRecvFrom, reinterpret_cast<LPVOID>(RecvFromEvent), reinterpret_cast<LPVOID *>(&originalRecvFrom)) != MH_OK)
-            WriteDebugLog("创建 recvfrom hook 失败");
+            LOG_ERROR("Failed to create recvfrom hook.", GetLastError());
     }
 
     if (MH_EnableHook(MH_ALL_HOOKS) != MH_OK)
     {
-        WriteDebugLog("启用 Hook 失败");
+        LOG_ERROR("Failed to enable hooks.", GetLastError());
         return;
     }
 
-    WriteDebugLog("Hook 创建并启用完成");
+    LOG_INFO("Hooks created and enabled successfully.");
 
     InitPipeClient();
-    WriteDebugLog("Hook 初始化完成");
+    LOG_INFO("Hook initialization completed.");
 }
 
 DWORD WINAPI InitHook_Thread(LPVOID lpParam)
 {
-    WriteDebugLog("InitHook_Thread 开始执行");
+    LOG_INFO("InitHook_Thread started.");
     ClientType type = *reinterpret_cast<ClientType *>(lpParam);
     InitHook(type);
-    WriteDebugLog("InitHook_Thread 执行完成");
+    LOG_INFO("InitHook_Thread finished.");
     return 0;
 }
 
@@ -232,13 +274,13 @@ BOOL APIENTRY DllMain(HMODULE hMod, DWORD reason, LPVOID)
 {
     if (reason == DLL_PROCESS_ATTACH)
     {
-        WriteDebugLog("DLL_PROCESS_ATTACH");
+        LOG_INFO("DLL_PROCESS_ATTACH");
         DisableThreadLibraryCalls(hMod);
         hModule = hMod;
     }
     else if (reason == DLL_PROCESS_DETACH)
     {
-        WriteDebugLog("DLL_PROCESS_DETACH");
+        LOG_INFO("DLL_PROCESS_DETACH");
         HMODULE ws2_32 = GetModuleHandleW(L"ws2_32");
         if (ws2_32)
         {
