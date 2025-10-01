@@ -134,7 +134,13 @@ void SendToInjector(SOCKET s, const char *data, size_t len, bool isSend)
     memcpy(buffer.data() + sizeof(PacketHeader), data, len);
 
     DWORD written = 0;
-    WriteFile(hPipe, buffer.data(), (DWORD)buffer.size(), &written, nullptr);
+    BOOL result = WriteFile(hPipe, buffer.data(), (DWORD)buffer.size(), &written, nullptr);
+    if (!result)
+    {
+        DWORD error = GetLastError();
+        WriteDebugLog("写入管道失败，错误码: " + std::to_string(error));
+        return;
+    }
 }
 
 void InitHook(ClientType type)
@@ -195,7 +201,7 @@ void InitHook(ClientType type)
             WriteDebugLog("创建 send hook 失败");
     }
 
-    if (targetRecvFrom || g_clientType == ClientType::Unity)
+    if (targetRecvFrom)
     {
         if (MH_CreateHook(targetRecvFrom, reinterpret_cast<LPVOID>(RecvFromEvent), reinterpret_cast<LPVOID *>(&originalRecvFrom)) != MH_OK)
             WriteDebugLog("创建 recvfrom hook 失败");
