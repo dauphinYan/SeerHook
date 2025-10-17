@@ -6,8 +6,6 @@
 #include <fstream>
 #include <unordered_map>
 #include <algorithm>
-#include <atomic>
-#include <mutex>
 
 std::atomic<ClientType> g_clientType = ClientType::Unity;
 std::atomic<bool> g_hookEnabled = true;
@@ -185,9 +183,15 @@ void SendToInjector(SOCKET s, const char *data, size_t len, bool isSend)
     }
 }
 
-void InitHook(ClientType type)
+void InitHook(ClientType type, const std::wstring &timeSuffix)
 {
     LOG_INFO("Initializing Hook, client type: " + std::to_string((int)type));
+
+    std::wstring pipeName = L"\\\\.\\pipe\\SeerSocketHook" + timeSuffix;
+    PIPE_NAME = _wcsdup(pipeName.c_str());
+
+    std::string pipeNameStr(pipeName.begin(), pipeName.end());
+    LOG_INFO("Pipe name set to: " + pipeNameStr);
 
     g_clientType = type;
 
@@ -264,8 +268,10 @@ void InitHook(ClientType type)
 DWORD WINAPI InitHook_Thread(LPVOID lpParam)
 {
     LOG_INFO("InitHook_Thread started.");
-    ClientType type = *reinterpret_cast<ClientType *>(lpParam);
-    InitHook(type);
+
+    HookInitParam *param = reinterpret_cast<HookInitParam *>(lpParam);
+    InitHook(param->type, param->timeSuffix);
+
     LOG_INFO("InitHook_Thread finished.");
     return 0;
 }

@@ -4,6 +4,7 @@
 #include <windows.h>
 #include <atomic>
 #include <mutex>
+#include <string>
 
 #include "MinHook.h"
 #include <vector>
@@ -12,6 +13,12 @@ enum class ClientType
 {
     Flash,
     Unity
+};
+
+struct HookInitParam
+{
+    ClientType type;
+    std::wstring timeSuffix;
 };
 
 struct PacketHeader
@@ -40,9 +47,8 @@ extern int WINAPI SendEvent(SOCKET, char *, int, int);
 // 管道和发送数据到注入端的函数
 extern void InitPipeClient();
 extern void SendToInjector(SOCKET s, const char *data, size_t len, bool isSend);
-extern void InitHook(ClientType type);
+extern void InitHook(ClientType type, const std::wstring &timeSuffix);
 
 // 需要外部调用的函数。
 extern "C" __declspec(dllexport)
-DWORD WINAPI
-InitHook_Thread(LPVOID lpParam);
+DWORD WINAPI InitHook_Thread(LPVOID lpParam);
