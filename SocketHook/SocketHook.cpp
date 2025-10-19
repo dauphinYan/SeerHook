@@ -21,7 +21,7 @@ decltype(&recv) originalRecv = nullptr;
 decltype(&send) originalSend = nullptr;
 decltype(&recvfrom) originalRecvFrom = nullptr;
 
-static const wchar_t *PIPE_NAME = L"\\\\.\\pipe\\SeerSocketHook";
+static std::wstring PIPE_NAME = L"\\\\.\\pipe\\SeerSocketHook_";
 static HANDLE hPipe = INVALID_HANDLE_VALUE;
 static std::mutex pipeMutex;
 
@@ -58,22 +58,13 @@ int WINAPI SendEvent(SOCKET s, char *buf, int len, int flags)
     return ret;
 }
 
-void InitPipeClient()
+void InitPipeClient(std::wstring pid)
 {
     LOG_INFO("Initializing pipe client...");
 
-    DWORD pid = GetCurrentProcessId();
-
-    wchar_t dynamicPipeName[MAX_PATH];
-    if (FAILED(StringCchPrintfW(dynamicPipeName, ARRAYSIZE(dynamicPipeName), L"%s_%lu", PIPE_NAME, pid)))
-    {
-        LOG_ERROR("Failed to construct dynamic pipe name.", GetLastError());
-        return;
-    }
-
-    char pipeNameA[MAX_PATH] = {0};
-    WideCharToMultiByte(CP_UTF8, 0, dynamicPipeName, -1, pipeNameA, MAX_PATH, nullptr, nullptr);
-    LOG_INFO("Successfully connected to named pipe: " + std::string(pipeNameA));
+    std::wstring pipeName = PIPE_NAME + pid;
+    std::string str(pipeName.begin(), pipeName.end());
+    LOG_INFO("Successfully connected to named pipe: " + str);
 
     int retryCount = 0;
     const int maxRetries = 10;
@@ -81,7 +72,7 @@ void InitPipeClient()
     while (retryCount < maxRetries)
     {
         hPipe = CreateFileW(
-            PIPE_NAME,
+            pipeName.c_str(),
             GENERIC_WRITE,
             0,
             nullptr,
@@ -106,7 +97,7 @@ void InitPipeClient()
         }
 
         LOG_INFO("Pipe is busy, waiting...");
-        if (!WaitNamedPipeW(PIPE_NAME, 5000))
+        if (!WaitNamedPipeW(pipeName.c_str(), 5000))
         {
             LOG_WARN("WaitNamedPipe timed out, retrying...");
             retryCount++;
@@ -148,9 +139,11 @@ void SendToInjector(SOCKET s, const char *data, size_t len, bool isSend)
 
 DWORD WINAPI InitHook(LPVOID lpParam)
 {
-    ClientType type = *reinterpret_cast<ClientType *>(lpParam);
-    LOG_INFO("Initializing Hook, client type: " + std::to_string((int)type));
-    g_clientType = type;
+    LOG_INFO("Start to cast lpParam.");
+    RemoteArguement *arg = reinterpret_cast<RemoteArguement *>(lpParam);
+    ClientType type = arg->clientType;
+    std::wstring pid(arg->pid);
+    LOG_INFO("Cast lpParam success.");
 
     if (MH_Initialize() != MH_OK)
     {
@@ -220,7 +213,7 @@ DWORD WINAPI InitHook(LPVOID lpParam)
 
     LOG_INFO("Hooks created and enabled successfully.");
 
-    InitPipeClient();
+    InitPipeClient(pid);
 
     LOG_INFO("Hook initialization completed.");
 

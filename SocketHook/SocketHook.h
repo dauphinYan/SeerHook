@@ -5,6 +5,7 @@
 #include <atomic>
 #include <mutex>
 #include <vector>
+#include <string>
 
 #include "MinHook.h"
 
@@ -12,6 +13,12 @@ enum class ClientType
 {
     Flash,
     Unity
+};
+
+struct RemoteArguement
+{
+    ClientType clientType;
+    wchar_t pid[32];
 };
 
 struct PacketHeader
@@ -36,7 +43,7 @@ extern int WINAPI RecvFromEvent(SOCKET, char *, int, int, struct sockaddr *, int
 extern int WINAPI SendEvent(SOCKET, char *, int, int);
 
 // 管道和发送数据到注入端的函数
-extern void InitPipeClient();
+extern void InitPipeClient(std::wstring pid);
 extern void SendToInjector(SOCKET s, const char *data, size_t len, bool isSend);
 
 // 供外部调用的函数
