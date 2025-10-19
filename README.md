@@ -16,7 +16,7 @@
 
 1. 环境配置：需自行配置MinGW编译器。
 
-2. 构建：配置完毕后运行命令`make`（具体命令需自行调整），会在根目录下生成`SocketHook.dll`。
+2. 构建：使用CMake进行构建，会在`build`目录下生成`SocketHook.dll`。
 
 ### 注意
 

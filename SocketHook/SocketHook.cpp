@@ -8,12 +8,14 @@
 #include <algorithm>
 #include <atomic>
 #include <mutex>
+#include <tchar.h>
+#include <strsafe.h>
+
+#include "Util/Log/Logger.h"
 
 std::atomic<ClientType> g_clientType = ClientType::Unity;
 std::atomic<bool> g_hookEnabled = true;
-std::atomic<bool> g_running = true;
 std::mutex g_dataMutex;
-HMODULE hModule;
 
 decltype(&recv) originalRecv = nullptr;
 decltype(&send) originalSend = nullptr;
@@ -22,60 +24,6 @@ decltype(&recvfrom) originalRecvFrom = nullptr;
 static const wchar_t *PIPE_NAME = L"\\\\.\\pipe\\SeerSocketHook";
 static HANDLE hPipe = INVALID_HANDLE_VALUE;
 static std::mutex pipeMutex;
-
-// ---------------------- Logging System ----------------------
-void WriteDebugLog(const std::string &level, const std::string &message, DWORD errorCode = 0)
-{
-    // Ensure log directory exists
-    CreateDirectoryA("log", nullptr);
-
-    std::ofstream logFile("log/sockethook_log.log", std::ios::app);
-    if (logFile.is_open())
-    {
-        SYSTEMTIME st;
-        GetLocalTime(&st);
-
-        DWORD threadId = GetCurrentThreadId();
-
-        logFile << "["
-                << std::setw(2) << std::setfill('0') << st.wHour << ":"
-                << std::setw(2) << std::setfill('0') << st.wMinute << ":"
-                << std::setw(2) << std::setfill('0') << st.wSecond << "."
-                << std::setw(3) << std::setfill('0') << st.wMilliseconds
-                << "][TID:" << threadId << "]"
-                << "[" << level << "] "
-                << message;
-
-        if (errorCode != 0)
-        {
-            LPSTR errorBuffer = nullptr;
-            FormatMessageA(
-                FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                nullptr, errorCode,
-                MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-                (LPSTR)&errorBuffer, 0, nullptr);
-
-            if (errorBuffer)
-            {
-                logFile << " | ErrorCode: " << errorCode << " (" << errorBuffer << ")";
-                LocalFree(errorBuffer);
-            }
-            else
-            {
-                logFile << " | ErrorCode: " << errorCode;
-            }
-        }
-
-        logFile << std::endl;
-        logFile.close();
-    }
-}
-
-#define LOG_INFO(msg) WriteDebugLog("INFO", msg)
-#define LOG_WARN(msg) WriteDebugLog("WARN", msg)
-#define LOG_ERROR(msg, code) WriteDebugLog("ERROR", msg, code)
-#define LOG_DEBUG(msg) WriteDebugLog("DEBUG", msg)
-// ------------------------------------------------------------
 
 int WINAPI RecvEvent(SOCKET s, char *buf, int len, int flags)
 {
@@ -113,6 +61,19 @@ int WINAPI SendEvent(SOCKET s, char *buf, int len, int flags)
 void InitPipeClient()
 {
     LOG_INFO("Initializing pipe client...");
+
+    DWORD pid = GetCurrentProcessId();
+
+    wchar_t dynamicPipeName[MAX_PATH];
+    if (FAILED(StringCchPrintfW(dynamicPipeName, ARRAYSIZE(dynamicPipeName), L"%s_%lu", PIPE_NAME, pid)))
+    {
+        LOG_ERROR("Failed to construct dynamic pipe name.", GetLastError());
+        return;
+    }
+
+    char pipeNameA[MAX_PATH] = {0};
+    WideCharToMultiByte(CP_UTF8, 0, dynamicPipeName, -1, pipeNameA, MAX_PATH, nullptr, nullptr);
+    LOG_INFO("Successfully connected to named pipe: " + std::string(pipeNameA));
 
     int retryCount = 0;
     const int maxRetries = 10;
@@ -185,88 +146,84 @@ void SendToInjector(SOCKET s, const char *data, size_t len, bool isSend)
     }
 }
 
-void InitHook(ClientType type)
+DWORD WINAPI InitHook(LPVOID lpParam)
 {
+    ClientType type = *reinterpret_cast<ClientType *>(lpParam);
     LOG_INFO("Initializing Hook, client type: " + std::to_string((int)type));
-
     g_clientType = type;
 
     if (MH_Initialize() != MH_OK)
     {
-        LOG_ERROR("MH_Initialize failed.", GetLastError());
-        return;
+        LOG_ERROR("MH_Initialize failed.", 0);
+        return 1;
     }
     LOG_INFO("MH_Initialize succeeded.");
 
-    // Wait for ws2_32.dll to load
     HMODULE ws2_32 = nullptr;
-    int retryCount = 0;
-    const int maxRetries = 50; // wait up to 5s
-
-    while (retryCount < maxRetries && !ws2_32)
+    const int maxRetries = 50;
+    for (int retryCount = 0; retryCount < maxRetries && !ws2_32; ++retryCount)
     {
         ws2_32 = GetModuleHandleW(L"ws2_32");
         if (!ws2_32)
         {
-            LOG_DEBUG("ws2_32.dll not loaded yet, waiting... (Attempt " + std::to_string(retryCount + 1) + "/" + std::to_string(maxRetries) + ")");
+            LOG_DEBUG("ws2_32.dll not loaded yet, waiting... (Attempt " +
+                      std::to_string(retryCount + 1) + "/" +
+                      std::to_string(maxRetries) + ")");
             Sleep(100);
-            retryCount++;
         }
     }
 
     if (!ws2_32)
     {
-        LOG_ERROR("Failed to load ws2_32.dll, cannot continue.", GetLastError());
-        return;
+        LOG_ERROR("Failed to load ws2_32.dll, cannot continue.", 0);
+        MH_Uninitialize();
+        return 1;
     }
     LOG_INFO("ws2_32.dll loaded successfully.");
 
-    // Get target functions
     LPVOID targetRecv = reinterpret_cast<LPVOID>(GetProcAddress(ws2_32, "recv"));
     LPVOID targetSend = reinterpret_cast<LPVOID>(GetProcAddress(ws2_32, "send"));
     LPVOID targetRecvFrom = reinterpret_cast<LPVOID>(GetProcAddress(ws2_32, "recvfrom"));
 
     if (!targetRecv || !targetSend)
     {
-        LOG_ERROR("Failed to get recv/send function address.", GetLastError());
+        LOG_ERROR("Failed to get recv/send function address.", 0);
+        MH_Uninitialize();
+        return 1;
     }
 
     if (targetRecv)
     {
         if (MH_CreateHook(targetRecv, reinterpret_cast<LPVOID>(RecvEvent), reinterpret_cast<LPVOID *>(&originalRecv)) != MH_OK)
-            LOG_ERROR("Failed to create recv hook.", GetLastError());
+            LOG_ERROR("Failed to create recv hook.", 0);
     }
 
     if (targetSend)
     {
         if (MH_CreateHook(targetSend, reinterpret_cast<LPVOID>(SendEvent), reinterpret_cast<LPVOID *>(&originalSend)) != MH_OK)
-            LOG_ERROR("Failed to create send hook.", GetLastError());
+            LOG_ERROR("Failed to create send hook.", 0);
     }
 
     if (targetRecvFrom)
     {
         if (MH_CreateHook(targetRecvFrom, reinterpret_cast<LPVOID>(RecvFromEvent), reinterpret_cast<LPVOID *>(&originalRecvFrom)) != MH_OK)
-            LOG_ERROR("Failed to create recvfrom hook.", GetLastError());
+            LOG_ERROR("Failed to create recvfrom hook.", 0);
     }
 
     if (MH_EnableHook(MH_ALL_HOOKS) != MH_OK)
     {
-        LOG_ERROR("Failed to enable hooks.", GetLastError());
-        return;
+        LOG_ERROR("Failed to enable hooks.", 0);
+        MH_DisableHook(MH_ALL_HOOKS);
+        MH_Uninitialize();
+        return 1;
     }
 
     LOG_INFO("Hooks created and enabled successfully.");
 
     InitPipeClient();
-    LOG_INFO("Hook initialization completed.");
-}
 
-DWORD WINAPI InitHook_Thread(LPVOID lpParam)
-{
-    LOG_INFO("InitHook_Thread started.");
-    ClientType type = *reinterpret_cast<ClientType *>(lpParam);
-    InitHook(type);
-    LOG_INFO("InitHook_Thread finished.");
+    LOG_INFO("Hook initialization completed.");
+
     return 0;
 }
 
@@ -276,11 +233,17 @@ BOOL APIENTRY DllMain(HMODULE hMod, DWORD reason, LPVOID)
     {
         LOG_INFO("DLL_PROCESS_ATTACH");
         DisableThreadLibraryCalls(hMod);
-        hModule = hMod;
     }
     else if (reason == DLL_PROCESS_DETACH)
     {
         LOG_INFO("DLL_PROCESS_DETACH");
+
+        if (hPipe != INVALID_HANDLE_VALUE)
+        {
+            CloseHandle(hPipe);
+            hPipe = INVALID_HANDLE_VALUE;
+        }
+
         HMODULE ws2_32 = GetModuleHandleW(L"ws2_32");
         if (ws2_32)
         {
